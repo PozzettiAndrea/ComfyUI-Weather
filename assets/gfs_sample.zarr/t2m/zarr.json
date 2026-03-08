@@ -1,0 +1,79 @@
+{
+  "shape": [
+    101,
+    161
+  ],
+  "data_type": "float32",
+  "chunk_grid": {
+    "name": "regular",
+    "configuration": {
+      "chunk_shape": [
+        101,
+        161
+      ]
+    }
+  },
+  "chunk_key_encoding": {
+    "name": "default",
+    "configuration": {
+      "separator": "/"
+    }
+  },
+  "fill_value": "NaN",
+  "codecs": [
+    {
+      "name": "bytes",
+      "configuration": {
+        "endian": "little"
+      }
+    },
+    {
+      "name": "zstd",
+      "configuration": {
+        "level": 0,
+        "checksum": false
+      }
+    }
+  ],
+  "attributes": {
+    "GRIB_paramId": 167,
+    "GRIB_dataType": "fc",
+    "GRIB_numberOfPoints": 16261,
+    "GRIB_typeOfLevel": "heightAboveGround",
+    "GRIB_stepUnits": 1,
+    "GRIB_stepType": "instant",
+    "GRIB_gridType": "regular_ll",
+    "GRIB_uvRelativeToGrid": 0,
+    "GRIB_NV": 0,
+    "GRIB_Nx": 161,
+    "GRIB_Ny": 101,
+    "GRIB_cfName": "air_temperature",
+    "GRIB_cfVarName": "t2m",
+    "GRIB_gridDefinitionDescription": "Latitude/longitude. Also called equidistant cylindrical, or Plate Carree",
+    "GRIB_iDirectionIncrementInDegrees": 0.25,
+    "GRIB_iScansNegatively": 0,
+    "GRIB_jDirectionIncrementInDegrees": 0.25,
+    "GRIB_jPointsAreConsecutive": 0,
+    "GRIB_jScansPositively": 1,
+    "GRIB_latitudeOfFirstGridPointInDegrees": 35.0,
+    "GRIB_latitudeOfLastGridPointInDegrees": 60.0,
+    "GRIB_longitudeOfFirstGridPointInDegrees": 350.0,
+    "GRIB_longitudeOfLastGridPointInDegrees": 30.0,
+    "GRIB_missingValue": 3.4028234663852886e+38,
+    "GRIB_name": "2 metre temperature",
+    "GRIB_shortName": "2t",
+    "GRIB_units": "K",
+    "long_name": "2 metre temperature",
+    "units": "K",
+    "standard_name": "air_temperature",
+    "coordinates": "time step heightAboveGround latitude longitude valid_time",
+    "_FillValue": "AAAAAAAA+H8="
+  },
+  "dimension_names": [
+    "latitude",
+    "longitude"
+  ],
+  "zarr_format": 3,
+  "node_type": "array",
+  "storage_transformers": []
+}

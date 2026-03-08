@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    background: #1a1a2e;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: #e0e0e0;
+}
+#container { position: relative; width: 100vw; height: 100vh; }
+canvas { display: block; cursor: crosshair; }
+#info {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    background: rgba(0,0,0,0.75);
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 1.4;
+    pointer-events: none;
+    white-space: pre;
+}
+#tooltip {
+    position: absolute;
+    display: none;
+    background: rgba(0,0,0,0.85);
+    padding: 4px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    pointer-events: none;
+    white-space: nowrap;
+}
+#colorbar {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 20px;
+    height: 60%;
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 2px;
+}
+#colorbar-labels {
+    position: absolute;
+    right: 38px;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 60%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    font-size: 10px;
+    pointer-events: none;
+}
+#loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 13px;
+    color: #888;
+}
+</style>
+</head>
+<body>
+<div id="container">
+    <canvas id="canvas"></canvas>
+    <div id="info">Waiting for data...</div>
+    <div id="tooltip"></div>
+    <canvas id="colorbar"></canvas>
+    <div id="colorbar-labels">
+        <span id="cb-max"></span>
+        <span id="cb-mid"></span>
+        <span id="cb-min"></span>
+    </div>
+    <div id="loading"></div>
+</div>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const info = document.getElementById("info");
+const tooltip = document.getElementById("tooltip");
+const loading = document.getElementById("loading");
+
+let gridData = null;
+let imageData = null;
+let viewState = { offsetX: 0, offsetY: 0, zoom: 1 };
+let isDragging = false;
+let dragStart = { x: 0, y: 0 };
+let dragOffset = { x: 0, y: 0 };
+
+// Color maps
+const COLORMAPS = {
+    RdBu_r: [
+        [0.0, [103, 0, 31]], [0.1, [178, 24, 43]], [0.2, [214, 96, 77]],
+        [0.3, [244, 165, 130]], [0.4, [253, 219, 199]], [0.5, [247, 247, 247]],
+        [0.6, [209, 229, 240]], [0.7, [146, 197, 222]], [0.8, [67, 147, 195]],
+        [0.9, [33, 102, 172]], [1.0, [5, 48, 97]]
+    ],
+};
+
+function interpolateColor(cmap, t) {
+    t = Math.max(0, Math.min(1, t));
+    const stops = cmap;
+    for (let i = 0; i < stops.length - 1; i++) {
+        if (t >= stops[i][0] && t <= stops[i + 1][0]) {
+            const f = (t - stops[i][0]) / (stops[i + 1][0] - stops[i][0]);
+            const c0 = stops[i][1];
+            const c1 = stops[i + 1][1];
+            return [
+                Math.round(c0[0] + f * (c1[0] - c0[0])),
+                Math.round(c0[1] + f * (c1[1] - c0[1])),
+                Math.round(c0[2] + f * (c1[2] - c0[2])),
+            ];
+        }
+    }
+    return stops[stops.length - 1][1];
+}
+
+function renderGrid() {
+    if (!gridData) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = canvas.clientWidth * dpr;
+    canvas.height = canvas.clientHeight * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const W = canvas.clientWidth;
+    const H = canvas.clientHeight;
+    const values = gridData.values;
+    const rows = values.length;
+    const cols = values[0].length;
+
+    // Compute value range
+    let vmin = Infinity, vmax = -Infinity;
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            const v = values[r][c];
+            if (v < vmin) vmin = v;
+            if (v > vmax) vmax = v;
+        }
+    }
+    gridData._vmin = vmin;
+    gridData._vmax = vmax;
+
+    // Map area with zoom/pan
+    const mapW = W * viewState.zoom;
+    const mapH = H * viewState.zoom;
+    const ox = viewState.offsetX;
+    const oy = viewState.offsetY;
+
+    // Clear
+    ctx.fillStyle = "#1a1a2e";
+    ctx.fillRect(0, 0, W, H);
+
+    // Draw heatmap via offscreen canvas + drawImage (respects dpr transform)
+    const offscreen = document.createElement("canvas");
+    offscreen.width = W;
+    offscreen.height = H;
+    const offCtx = offscreen.getContext("2d");
+    const imgData = offCtx.createImageData(W, H);
+    const data = imgData.data;
+
+    const cmap = COLORMAPS.RdBu_r;
+    const vrange = vmax - vmin || 1;
+
+    for (let py = 0; py < H; py++) {
+        for (let px = 0; px < W; px++) {
+            const gx = ((px - ox) / mapW) * cols;
+            const gy = ((py - oy) / mapH) * rows;
+
+            const gi = Math.floor(gy);
+            const gj = Math.floor(gx);
+
+            if (gi < 0 || gi >= rows || gj < 0 || gj >= cols) {
+                const idx = (py * W + px) * 4;
+                data[idx] = 26; data[idx+1] = 26; data[idx+2] = 46; data[idx+3] = 255;
+                continue;
+            }
+
+            const v = values[gi][gj];
+            const t = (v - vmin) / vrange;
+            const color = interpolateColor(cmap, t);
+            const idx = (py * W + px) * 4;
+            data[idx] = color[0];
+            data[idx+1] = color[1];
+            data[idx+2] = color[2];
+            data[idx+3] = 255;
+        }
+    }
+
+    offCtx.putImageData(imgData, 0, 0);
+    ctx.drawImage(offscreen, 0, 0);
+
+    // Draw coastlines if available
+    if (gridData._coastlines) {
+        drawCoastlines(W, H, mapW, mapH, ox, oy, cols, rows);
+    }
+
+    // Draw grid lines
+    ctx.strokeStyle = "rgba(255,255,255,0.15)";
+    ctx.lineWidth = 0.5;
+    const lats = gridData.latitude;
+    const lons = gridData.longitude;
+    const latStep = Math.max(10, Math.round(30 / viewState.zoom));
+    const lonStep = Math.max(10, Math.round(30 / viewState.zoom));
+
+    for (let i = 0; i < rows; i += Math.floor(rows / (180 / latStep))) {
+        const py = oy + (i / rows) * mapH;
+        if (py >= 0 && py <= H) {
+            ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(W, py); ctx.stroke();
+        }
+    }
+    for (let j = 0; j < cols; j += Math.floor(cols / (360 / lonStep))) {
+        const px = ox + (j / cols) * mapW;
+        if (px >= 0 && px <= W) {
+            ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, H); ctx.stroke();
+        }
+    }
+
+    // Update colorbar
+    renderColorbar(vmin, vmax, gridData.unit);
+
+    // Update info
+    const latRange = `${lats[0].toFixed(1)}° to ${lats[lats.length-1].toFixed(1)}°`;
+    const lonRange = `${lons[0].toFixed(1)}° to ${lons[lons.length-1].toFixed(1)}°`;
+    info.textContent =
+        `${gridData.long_name || gridData.variable} [${gridData.unit}]\n` +
+        `${gridData.timestamp}\n` +
+        `Grid: ${rows}×${cols} (${latRange} lat, ${lonRange} lon)\n` +
+        `Range: ${vmin.toFixed(1)} to ${vmax.toFixed(1)} ${gridData.unit}`;
+}
+
+function drawCoastlines(W, H, mapW, mapH, ox, oy, cols, rows) {
+    const lats = gridData.latitude;
+    const lons = gridData.longitude;
+    const latMin = Math.min(lats[0], lats[lats.length-1]);
+    const latMax = Math.max(lats[0], lats[lats.length-1]);
+    const lonMin = Math.min(lons[0], lons[lons.length-1]);
+    const lonMax = Math.max(lons[0], lons[lons.length-1]);
+    const latRange = latMax - latMin || 1;
+    const lonRange = lonMax - lonMin || 1;
+
+    const latsDescending = lats[0] > lats[lats.length-1];
+
+    ctx.strokeStyle = "rgba(255,255,255,0.5)";
+    ctx.lineWidth = 0.8;
+
+    for (const segment of gridData._coastlines) {
+        ctx.beginPath();
+        let started = false;
+        for (const [lon, lat] of segment) {
+            const nx = (lon - lonMin) / lonRange;
+            const ny = latsDescending ? (latMax - lat) / latRange : (lat - latMin) / latRange;
+            const px = ox + nx * mapW;
+            const py = oy + ny * mapH;
+
+            if (!started) { ctx.moveTo(px, py); started = true; }
+            else { ctx.lineTo(px, py); }
+        }
+        ctx.stroke();
+    }
+}
+
+function renderColorbar(vmin, vmax, unit) {
+    const cb = document.getElementById("colorbar");
+    const cbCtx = cb.getContext("2d");
+    const dpr = window.devicePixelRatio || 1;
+    cb.width = 20 * dpr;
+    cb.height = cb.clientHeight * dpr;
+    cbCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const h = cb.clientHeight;
+    const cmap = COLORMAPS.RdBu_r;
+
+    for (let y = 0; y < h; y++) {
+        const t = y / h;
+        const color = interpolateColor(cmap, t);
+        cbCtx.fillStyle = `rgb(${color[0]},${color[1]},${color[2]})`;
+        cbCtx.fillRect(0, y, 20, 1);
+    }
+
+    document.getElementById("cb-max").textContent = vmax.toFixed(1);
+    document.getElementById("cb-mid").textContent = ((vmin + vmax) / 2).toFixed(1);
+    document.getElementById("cb-min").textContent = vmin.toFixed(1);
+}
+
+// Mouse interaction
+canvas.addEventListener("mousemove", (e) => {
+    if (!gridData) return;
+
+    if (isDragging) {
+        viewState.offsetX = dragOffset.x + (e.clientX - dragStart.x);
+        viewState.offsetY = dragOffset.y + (e.clientY - dragStart.y);
+        renderGrid();
+        return;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+    const W = canvas.clientWidth;
+    const H = canvas.clientHeight;
+    const mapW = W * viewState.zoom;
+    const mapH = H * viewState.zoom;
+
+    const rows = gridData.values.length;
+    const cols = gridData.values[0].length;
+    const gi = Math.floor(((py - viewState.offsetY) / mapH) * rows);
+    const gj = Math.floor(((px - viewState.offsetX) / mapW) * cols);
+
+    if (gi >= 0 && gi < rows && gj >= 0 && gj < cols) {
+        const lat = gridData.latitude[gi];
+        const lon = gridData.longitude[gj];
+        const val = gridData.values[gi][gj];
+        tooltip.style.display = "block";
+        tooltip.style.left = (e.clientX - rect.left + 15) + "px";
+        tooltip.style.top = (e.clientY - rect.top - 10) + "px";
+        tooltip.textContent = `${lat.toFixed(2)}°, ${lon.toFixed(2)}° → ${val.toFixed(2)} ${gridData.unit}`;
+    } else {
+        tooltip.style.display = "none";
+    }
+});
+
+canvas.addEventListener("mousedown", (e) => {
+    isDragging = true;
+    dragStart = { x: e.clientX, y: e.clientY };
+    dragOffset = { x: viewState.offsetX, y: viewState.offsetY };
+    canvas.style.cursor = "grabbing";
+});
+
+canvas.addEventListener("mouseup", () => {
+    isDragging = false;
+    canvas.style.cursor = "crosshair";
+});
+
+canvas.addEventListener("mouseleave", () => {
+    isDragging = false;
+    tooltip.style.display = "none";
+    canvas.style.cursor = "crosshair";
+});
+
+canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    const oldZoom = viewState.zoom;
+    const factor = e.deltaY > 0 ? 0.9 : 1.1;
+    viewState.zoom = Math.max(0.5, Math.min(20, viewState.zoom * factor));
+
+    // Zoom toward mouse position
+    viewState.offsetX = mx - (mx - viewState.offsetX) * (viewState.zoom / oldZoom);
+    viewState.offsetY = my - (my - viewState.offsetY) * (viewState.zoom / oldZoom);
+
+    renderGrid();
+}, { passive: false });
+
+// Resize
+function resize() {
+    canvas.style.width = "100vw";
+    canvas.style.height = "100vh";
+    renderGrid();
+}
+window.addEventListener("resize", resize);
+
+// Load coastline data (simplified world coastline)
+async function loadCoastlines() {
+    try {
+        const base = window.location.href.substring(0, window.location.href.lastIndexOf("/"));
+        const resp = await fetch(base + "/../coastlines.json");
+        if (resp.ok) {
+            const data = await resp.json();
+            return data;
+        }
+    } catch (e) {
+        console.log("No coastline data available");
+    }
+    return null;
+}
+
+// Message handler
+window.addEventListener("message", async (event) => {
+    if (event.data.type === "LOAD_GRID") {
+        loading.textContent = "Loading grid data...";
+
+        try {
+            const resp = await fetch(event.data.filepath);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            gridData = await resp.json();
+
+            // Try to load coastlines
+            const coastlines = await loadCoastlines();
+            if (coastlines) gridData._coastlines = coastlines;
+
+            loading.textContent = "";
+            viewState = { offsetX: 0, offsetY: 0, zoom: 1 };
+            resize();
+        } catch (err) {
+            loading.textContent = `Error: ${err.message}`;
+            console.error("Failed to load grid data:", err);
+        }
+    }
+});
+
+resize();
+</script>
+</body>
+</html>

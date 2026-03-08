@@ -1,0 +1,13 @@
+[project]
+name = "comfyui-weather"
+description = "Weather data nodes for ComfyUI. Fetch forecasts from Open-Meteo and Jua.ai, visualize and process weather data."
+version = "0.1.0"
+license = {text = "MIT"}
+
+[project.urls]
+Repository = "https://github.com/PozzettiAndrea/ComfyUI-Weather"
+
+[tool.comfy]
+PublisherId = "pznodes"
+DisplayName = "ComfyUI-Weather"
+Icon = ""

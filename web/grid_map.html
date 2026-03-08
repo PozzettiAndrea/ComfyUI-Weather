@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a2e; }
+canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+</style>
+</head>
+<body>
+<canvas id="map"></canvas>
+<script>
+const canvas = document.getElementById("map");
+const ctx = canvas.getContext("2d");
+
+let coastlines = null;
+let W = 0, H = 0, dpr = 1;
+
+// View transform (pan & zoom)
+let viewX = 0, viewY = 0, zoom = 1;
+let panning = false, panStart = null;
+
+// Bounding box state
+let bbox = null;
+let dragging = false;
+let dragStart = null;
+let dragCurrent = null;
+
+function lonToX(lon) { return ((lon + 180) / 360 * W) * zoom + viewX; }
+function latToY(lat) { return ((90 - lat) / 180 * H) * zoom + viewY; }
+function xToLon(x) { return ((x - viewX) / zoom / W) * 360 - 180; }
+function yToLat(y) { return 90 - ((y - viewY) / zoom / H) * 180; }
+
+function resize() {
+    dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    W = rect.width;
+    H = rect.height;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    render();
+}
+
+function render() {
+    ctx.fillStyle = "#1a1a2e";
+    ctx.fillRect(0, 0, W, H);
+
+    // Land
+    if (coastlines) {
+        ctx.fillStyle = "#2a2a4a";
+        for (const seg of coastlines) {
+            if (seg.length < 2) continue;
+            ctx.beginPath();
+            ctx.moveTo(lonToX(seg[0][0]), latToY(seg[0][1]));
+            for (let i = 1; i < seg.length; i++) ctx.lineTo(lonToX(seg[i][0]), latToY(seg[i][1]));
+            ctx.closePath();
+            ctx.fill();
+        }
+        ctx.strokeStyle = "#555";
+        ctx.lineWidth = 0.5;
+        for (const seg of coastlines) {
+            if (seg.length < 2) continue;
+            ctx.beginPath();
+            ctx.moveTo(lonToX(seg[0][0]), latToY(seg[0][1]));
+            for (let i = 1; i < seg.length; i++) ctx.lineTo(lonToX(seg[i][0]), latToY(seg[i][1]));
+            ctx.stroke();
+        }
+    }
+
+    // Grid lines - adaptive spacing based on zoom
+    const gridStep = zoom < 2 ? 30 : zoom < 5 ? 10 : zoom < 15 ? 5 : 1;
+    ctx.strokeStyle = "rgba(255,255,255,0.08)";
+    ctx.lineWidth = 0.5;
+    for (let lat = -90; lat <= 90; lat += gridStep) {
+        const y = latToY(lat);
+        if (y < -10 || y > H + 10) continue;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+    for (let lon = -180; lon <= 180; lon += gridStep) {
+        const x = lonToX(lon);
+        if (x < -10 || x > W + 10) continue;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+
+    // Labels
+    ctx.fillStyle = "rgba(255,255,255,0.25)";
+    ctx.font = "9px monospace";
+    const labelStep = zoom < 2 ? 30 : zoom < 5 ? 10 : zoom < 15 ? 5 : 1;
+    ctx.textAlign = "left";
+    for (let lat = -90; lat <= 90; lat += labelStep) {
+        const y = latToY(lat);
+        if (y < 5 || y > H - 5) continue;
+        ctx.fillText(`${lat}°`, 3, y - 2);
+    }
+    ctx.textAlign = "center";
+    for (let lon = -180; lon <= 180; lon += labelStep) {
+        const x = lonToX(lon);
+        if (x < 10 || x > W - 10) continue;
+        ctx.fillText(`${lon}°`, x, H - 3);
+    }
+
+    // Draw bbox (either committed or in-progress drag)
+    let drawBox = null;
+    if (dragging && dragStart && dragCurrent) {
+        drawBox = {
+            x: Math.min(dragStart.x, dragCurrent.x),
+            y: Math.min(dragStart.y, dragCurrent.y),
+            w: Math.abs(dragCurrent.x - dragStart.x),
+            h: Math.abs(dragCurrent.y - dragStart.y),
+        };
+    } else if (bbox) {
+        const x1 = lonToX(bbox.lon_west);
+        const y1 = latToY(bbox.lat_north);
+        const x2 = lonToX(bbox.lon_east);
+        const y2 = latToY(bbox.lat_south);
+        drawBox = { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+    }
+
+    if (drawBox && drawBox.w > 0 && drawBox.h > 0) {
+        // Dimmed overlay outside box
+        ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+        ctx.fillRect(0, 0, W, drawBox.y);
+        ctx.fillRect(0, drawBox.y + drawBox.h, W, H - drawBox.y - drawBox.h);
+        ctx.fillRect(0, drawBox.y, drawBox.x, drawBox.h);
+        ctx.fillRect(drawBox.x + drawBox.w, drawBox.y, W - drawBox.x - drawBox.w, drawBox.h);
+
+        // Box fill
+        ctx.fillStyle = "rgba(33, 150, 243, 0.15)";
+        ctx.fillRect(drawBox.x, drawBox.y, drawBox.w, drawBox.h);
+
+        // Box border
+        ctx.strokeStyle = "#2196F3";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 3]);
+        ctx.strokeRect(drawBox.x, drawBox.y, drawBox.w, drawBox.h);
+        ctx.setLineDash([]);
+
+        // Corner handles
+        const corners = [
+            [drawBox.x, drawBox.y],
+            [drawBox.x + drawBox.w, drawBox.y],
+            [drawBox.x, drawBox.y + drawBox.h],
+            [drawBox.x + drawBox.w, drawBox.y + drawBox.h],
+        ];
+        for (const [cx, cy] of corners) {
+            ctx.fillStyle = "#2196F3";
+            ctx.fillRect(cx - 3, cy - 3, 6, 6);
+            ctx.strokeStyle = "#fff";
+            ctx.lineWidth = 1;
+            ctx.strokeRect(cx - 3, cy - 3, 6, 6);
+        }
+
+        // Label
+        if (bbox && !dragging) {
+            const label = `${bbox.lat_south.toFixed(1)}°,${bbox.lon_west.toFixed(1)}° → ${bbox.lat_north.toFixed(1)}°,${bbox.lon_east.toFixed(1)}°`;
+            ctx.font = "bold 10px monospace";
+            const tw = ctx.measureText(label).width;
+            const lx = drawBox.x + (drawBox.w - tw) / 2;
+            const ly = drawBox.y - 6;
+            if (ly > 12) {
+                ctx.fillStyle = "rgba(0,0,0,0.7)";
+                ctx.fillRect(lx - 4, ly - 10, tw + 8, 14);
+                ctx.fillStyle = "#2196F3";
+                ctx.textAlign = "left";
+                ctx.fillText(label, lx, ly);
+            }
+        }
+    }
+
+    // Empty state
+    if (!bbox && !dragging && zoom === 1) {
+        ctx.fillStyle = "rgba(255,255,255,0.4)";
+        ctx.font = "14px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("Click and drag to draw a bounding box", W / 2, H / 2);
+        ctx.font = "11px sans-serif";
+        ctx.fillText("Scroll to zoom · Middle-click to pan · Right-click to clear", W / 2, H / 2 + 20);
+    }
+
+    // Zoom indicator
+    if (zoom !== 1) {
+        ctx.fillStyle = "rgba(255,255,255,0.3)";
+        ctx.font = "10px monospace";
+        ctx.textAlign = "right";
+        ctx.fillText(`${zoom.toFixed(1)}x`, W - 5, 12);
+    }
+}
+
+function getLogicalPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+// Left-click drag to draw bbox
+canvas.addEventListener("mousedown", (e) => {
+    if (e.button === 0) {
+        dragging = true;
+        dragStart = getLogicalPos(e);
+        dragCurrent = dragStart;
+        bbox = null;
+        render();
+    } else if (e.button === 1) {
+        // Middle-click pan
+        e.preventDefault();
+        panning = true;
+        panStart = { x: e.clientX - viewX, y: e.clientY - viewY };
+        canvas.style.cursor = "grabbing";
+    }
+});
+
+canvas.addEventListener("mousemove", (e) => {
+    if (dragging) {
+        dragCurrent = getLogicalPos(e);
+        render();
+    } else if (panning && panStart) {
+        viewX = e.clientX - panStart.x;
+        viewY = e.clientY - panStart.y;
+        render();
+    }
+});
+
+canvas.addEventListener("mouseup", (e) => {
+    if (e.button === 0 && dragging) {
+        dragging = false;
+        if (dragStart && dragCurrent) {
+            const x1 = Math.min(dragStart.x, dragCurrent.x);
+            const y1 = Math.min(dragStart.y, dragCurrent.y);
+            const x2 = Math.max(dragStart.x, dragCurrent.x);
+            const y2 = Math.max(dragStart.y, dragCurrent.y);
+
+            if (x2 - x1 >= 5 && y2 - y1 >= 5) {
+                bbox = {
+                    lat_south: parseFloat(yToLat(y2).toFixed(4)),
+                    lon_west: parseFloat(xToLon(x1).toFixed(4)),
+                    lat_north: parseFloat(yToLat(y1).toFixed(4)),
+                    lon_east: parseFloat(xToLon(x2).toFixed(4)),
+                };
+                sendState();
+            }
+        }
+        dragStart = null;
+        dragCurrent = null;
+        render();
+    } else if (e.button === 1 && panning) {
+        panning = false;
+        panStart = null;
+        canvas.style.cursor = "crosshair";
+    }
+});
+
+// Right-click to clear bbox
+canvas.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    bbox = null;
+    dragging = false;
+    dragStart = null;
+    dragCurrent = null;
+    render();
+    sendState();
+});
+
+// Scroll to zoom
+canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const pos = getLogicalPos(e);
+    const oldZoom = zoom;
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    zoom = Math.max(1, Math.min(50, zoom * factor));
+
+    // Zoom toward cursor
+    viewX = pos.x - (pos.x - viewX) * (zoom / oldZoom);
+    viewY = pos.y - (pos.y - viewY) * (zoom / oldZoom);
+
+    if (zoom === 1) { viewX = 0; viewY = 0; }
+
+    render();
+}, { passive: false });
+
+// Double-click to reset view
+canvas.addEventListener("dblclick", (e) => {
+    e.preventDefault();
+    zoom = 1; viewX = 0; viewY = 0;
+    render();
+});
+
+function sendState() {
+    if (!window.parent) return;
+    window.parent.postMessage({ type: "BBOX_UPDATE", bbox }, "*");
+}
+
+window.addEventListener("message", (e) => {
+    if (e.data?.type === "LOAD_MAP") {
+        if (e.data.coastlinesUrl) {
+            fetch(e.data.coastlinesUrl)
+                .then(r => r.json())
+                .then(data => { coastlines = data; render(); })
+                .catch(err => console.warn("Failed to load coastlines:", err));
+        }
+        if (e.data.savedBbox) {
+            try {
+                const saved = typeof e.data.savedBbox === "string"
+                    ? JSON.parse(e.data.savedBbox) : e.data.savedBbox;
+                if (saved && saved.lat_south != null) bbox = saved;
+            } catch (err) {}
+        }
+        render();
+    }
+});
+
+window.addEventListener("resize", resize);
+resize();
+</script>
+</body>
+</html>

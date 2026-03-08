@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a2e; }
+canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+</style>
+</head>
+<body>
+<canvas id="map"></canvas>
+<script>
+const canvas = document.getElementById("map");
+const ctx = canvas.getContext("2d");
+
+let coastlines = null;
+let markers = []; // [{lat, lon}]
+let W = 0, H = 0, dpr = 1;
+
+// View transform (pan & zoom)
+let viewX = 0, viewY = 0, zoom = 1;
+let panning = false, panStart = null;
+
+// Projection: world coords (lon/lat) -> view coords (pixels on screen)
+function lonToX(lon) { return ((lon + 180) / 360 * W) * zoom + viewX; }
+function latToY(lat) { return ((90 - lat) / 180 * H) * zoom + viewY; }
+function xToLon(x) { return ((x - viewX) / zoom / W) * 360 - 180; }
+function yToLat(y) { return 90 - ((y - viewY) / zoom / H) * 180; }
+
+function resize() {
+    dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    W = rect.width;
+    H = rect.height;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    render();
+}
+
+function render() {
+    ctx.fillStyle = "#1a1a2e";
+    ctx.fillRect(0, 0, W, H);
+
+    // Land
+    if (coastlines) {
+        ctx.fillStyle = "#2a2a4a";
+        for (const seg of coastlines) {
+            if (seg.length < 2) continue;
+            ctx.beginPath();
+            ctx.moveTo(lonToX(seg[0][0]), latToY(seg[0][1]));
+            for (let i = 1; i < seg.length; i++) ctx.lineTo(lonToX(seg[i][0]), latToY(seg[i][1]));
+            ctx.closePath();
+            ctx.fill();
+        }
+        ctx.strokeStyle = "#555";
+        ctx.lineWidth = 0.5;
+        for (const seg of coastlines) {
+            if (seg.length < 2) continue;
+            ctx.beginPath();
+            ctx.moveTo(lonToX(seg[0][0]), latToY(seg[0][1]));
+            for (let i = 1; i < seg.length; i++) ctx.lineTo(lonToX(seg[i][0]), latToY(seg[i][1]));
+            ctx.stroke();
+        }
+    }
+
+    // Grid lines - adaptive spacing based on zoom
+    const gridStep = zoom < 2 ? 30 : zoom < 5 ? 10 : zoom < 15 ? 5 : 1;
+    ctx.strokeStyle = "rgba(255,255,255,0.08)";
+    ctx.lineWidth = 0.5;
+    for (let lat = -90; lat <= 90; lat += gridStep) {
+        const y = latToY(lat);
+        if (y < -10 || y > H + 10) continue;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+    for (let lon = -180; lon <= 180; lon += gridStep) {
+        const x = lonToX(lon);
+        if (x < -10 || x > W + 10) continue;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+
+    // Labels - adaptive
+    ctx.fillStyle = "rgba(255,255,255,0.25)";
+    ctx.font = "9px monospace";
+    const labelStep = zoom < 2 ? 30 : zoom < 5 ? 10 : zoom < 15 ? 5 : 1;
+    ctx.textAlign = "left";
+    for (let lat = -90; lat <= 90; lat += labelStep) {
+        const y = latToY(lat);
+        if (y < 5 || y > H - 5) continue;
+        ctx.fillText(`${lat}°`, 3, y - 2);
+    }
+    ctx.textAlign = "center";
+    for (let lon = -180; lon <= 180; lon += labelStep) {
+        const x = lonToX(lon);
+        if (x < 10 || x > W - 10) continue;
+        ctx.fillText(`${lon}°`, x, H - 3);
+    }
+
+    // Markers
+    for (let i = 0; i < markers.length; i++) {
+        const m = markers[i];
+        const x = lonToX(m.lon);
+        const y = latToY(m.lat);
+        const isLast = i === markers.length - 1;
+
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.beginPath();
+        ctx.arc(x + 1, y + 1, isLast ? 6 : 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = isLast ? "#ff4444" : "#ff8888";
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = isLast ? 2 : 1;
+        ctx.beginPath();
+        ctx.arc(x, y, isLast ? 6 : 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = "#fff";
+        ctx.beginPath();
+        ctx.arc(x, y, isLast ? 2 : 1.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (isLast) {
+            const label = `${m.lat.toFixed(2)}°, ${m.lon.toFixed(2)}°`;
+            ctx.font = "bold 11px monospace";
+            const tw = ctx.measureText(label).width;
+            const lx = Math.min(Math.max(x - tw / 2, 2), W - tw - 2);
+            const ly = y - 12;
+            ctx.fillStyle = "rgba(0,0,0,0.7)";
+            ctx.fillRect(lx - 3, ly - 11, tw + 6, 14);
+            ctx.fillStyle = "#fff";
+            ctx.textAlign = "left";
+            ctx.fillText(label, lx, ly);
+        }
+    }
+
+    // Empty state
+    if (markers.length === 0 && zoom === 1) {
+        ctx.fillStyle = "rgba(255,255,255,0.4)";
+        ctx.font = "14px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("Click to place a marker", W / 2, H / 2);
+        ctx.font = "11px sans-serif";
+        ctx.fillText("Scroll to zoom · Middle-click to pan · Right-click to undo", W / 2, H / 2 + 20);
+    }
+
+    // Zoom indicator
+    if (zoom !== 1) {
+        ctx.fillStyle = "rgba(255,255,255,0.3)";
+        ctx.font = "10px monospace";
+        ctx.textAlign = "right";
+        ctx.fillText(`${zoom.toFixed(1)}x`, W - 5, 12);
+    }
+}
+
+function getLogicalPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+// Click to add marker (left click only, not during pan)
+canvas.addEventListener("click", (e) => {
+    if (e.button !== 0) return;
+    const pos = getLogicalPos(e);
+    const lat = parseFloat(yToLat(pos.y).toFixed(4));
+    const lon = parseFloat(xToLon(pos.x).toFixed(4));
+    markers.push({ lat, lon });
+    render();
+    sendState();
+});
+
+// Right-click to remove last marker
+canvas.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    if (markers.length > 0) {
+        markers.pop();
+        render();
+        sendState();
+    }
+});
+
+// Middle-click pan
+canvas.addEventListener("mousedown", (e) => {
+    if (e.button === 1) {
+        e.preventDefault();
+        panning = true;
+        panStart = { x: e.clientX - viewX, y: e.clientY - viewY };
+        canvas.style.cursor = "grabbing";
+    }
+});
+
+canvas.addEventListener("mousemove", (e) => {
+    if (panning && panStart) {
+        viewX = e.clientX - panStart.x;
+        viewY = e.clientY - panStart.y;
+        render();
+    }
+});
+
+canvas.addEventListener("mouseup", (e) => {
+    if (e.button === 1 && panning) {
+        panning = false;
+        panStart = null;
+        canvas.style.cursor = "crosshair";
+        sendViewState();
+    }
+});
+
+// Scroll to zoom
+canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const pos = getLogicalPos(e);
+    const oldZoom = zoom;
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    zoom = Math.max(1, Math.min(50, zoom * factor));
+
+    // Zoom toward cursor
+    viewX = pos.x - (pos.x - viewX) * (zoom / oldZoom);
+    viewY = pos.y - (pos.y - viewY) * (zoom / oldZoom);
+
+    // Clamp pan so map doesn't fly off when at zoom=1
+    if (zoom === 1) { viewX = 0; viewY = 0; }
+
+    render();
+    sendViewState();
+}, { passive: false });
+
+// Double-click to reset view
+canvas.addEventListener("dblclick", (e) => {
+    e.preventDefault();
+    zoom = 1; viewX = 0; viewY = 0;
+    render();
+    sendViewState();
+});
+
+function sendState() {
+    if (!window.parent) return;
+    window.parent.postMessage({ type: "LATLON_UPDATE", markers }, "*");
+}
+
+function sendViewState() {
+    if (!window.parent) return;
+    window.parent.postMessage({
+        type: "VIEW_STATE",
+        state: JSON.stringify({ zoom, viewX: viewX / W, viewY: viewY / H }),
+    }, "*");
+}
+
+window.addEventListener("message", (e) => {
+    if (e.data?.type === "LOAD_MAP") {
+        if (e.data.coastlinesUrl) {
+            fetch(e.data.coastlinesUrl)
+                .then(r => r.json())
+                .then(data => { coastlines = data; render(); })
+                .catch(err => console.warn("Failed to load coastlines:", err));
+        }
+        if (e.data.savedMarkers) {
+            try {
+                const saved = typeof e.data.savedMarkers === "string"
+                    ? JSON.parse(e.data.savedMarkers) : e.data.savedMarkers;
+                if (Array.isArray(saved)) markers = saved;
+            } catch (err) {}
+        }
+        if (e.data.savedViewState) {
+            try {
+                const vs = typeof e.data.savedViewState === "string"
+                    ? JSON.parse(e.data.savedViewState) : e.data.savedViewState;
+                if (vs.zoom) zoom = vs.zoom;
+                if (vs.viewX != null) viewX = vs.viewX * W;
+                if (vs.viewY != null) viewY = vs.viewY * H;
+            } catch (err) {}
+        }
+        render();
+    }
+});
+
+window.addEventListener("resize", resize);
+resize();
+</script>
+</body>
+</html>
