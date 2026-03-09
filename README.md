@@ -2,6 +2,10 @@
 
 Weather data nodes for ComfyUI. Fetch forecasts from [Open-Meteo](https://open-meteo.com/) and [Jua.ai](https://jua.ai/), visualize and process weather data.
 
+
+https://github.com/user-attachments/assets/e497ffcb-65c8-4f72-8ed4-9f59f9fc720e
+
+
 ## Nodes
 
 | Node | Description |
