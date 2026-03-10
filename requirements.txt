@@ -5,3 +5,5 @@ matplotlib
 xarray
 cfgrib
 eccodes
+earth2studio
+huggingface_hub

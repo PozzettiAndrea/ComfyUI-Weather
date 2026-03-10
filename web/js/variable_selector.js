@@ -71,34 +71,84 @@ const GRID_KEYS = new Set([
     "cape", "soil_temperature_0cm", "snow_depth",
 ]);
 
+// Must match JUA_VAR_META in fetch_jua.py
+const JUA_VARIABLE_GROUPS = [
+    {
+        name: "Temperature",
+        vars: [
+            { key: "air_temperature_at_height_level_2m", label: "2m Temperature", unit: "K", tip: "Air temperature at 2m (Kelvin)" },
+            { key: "dew_point_temperature_at_height_level_2m", label: "2m Dew Point", unit: "K", tip: "Dew point temperature at 2m" },
+        ],
+    },
+    {
+        name: "Wind",
+        vars: [
+            { key: "wind_speed_at_height_level_10m", label: "10m Wind Speed", unit: "m/s", tip: "Wind speed at 10m" },
+            { key: "wind_speed_at_height_level_100m", label: "100m Wind Speed", unit: "m/s", tip: "Wind speed at 100m — wind energy" },
+            { key: "wind_direction_at_height_level_10m", label: "10m Wind Direction", unit: "°", tip: "Wind direction at 10m" },
+            { key: "wind_direction_at_height_level_100m", label: "100m Wind Direction", unit: "°", tip: "Wind direction at 100m" },
+        ],
+    },
+    {
+        name: "Atmosphere",
+        vars: [
+            { key: "relative_humidity_at_height_level_2m", label: "2m Relative Humidity", unit: "%", tip: "Relative humidity at 2m" },
+            { key: "air_pressure_at_mean_sea_level", label: "MSL Pressure", unit: "Pa", tip: "Pressure at mean sea level" },
+            { key: "precipitation_amount_sum_1h", label: "Precipitation (1h)", unit: "mm", tip: "Precipitation amount sum over 1 hour" },
+            { key: "cloud_area_fraction_at_entire_atmosphere", label: "Cloud Cover", unit: "%", tip: "Cloud area fraction" },
+        ],
+    },
+    {
+        name: "Radiation",
+        vars: [
+            { key: "surface_direct_downwelling_shortwave_flux_sum_1h", label: "Direct SW Flux (1h)", unit: "W/m²", tip: "Direct downwelling shortwave flux" },
+            { key: "surface_downwelling_shortwave_flux_sum_1h", label: "SW Flux (1h)", unit: "W/m²", tip: "Total downwelling shortwave flux" },
+        ],
+    },
+];
+
+const JUA_PRESETS = {
+    "Temperature & Wind": ["air_temperature_at_height_level_2m", "wind_speed_at_height_level_10m"],
+    "Full Weather": ["air_temperature_at_height_level_2m", "relative_humidity_at_height_level_2m", "precipitation_amount_sum_1h", "wind_speed_at_height_level_10m", "cloud_area_fraction_at_entire_atmosphere", "air_pressure_at_mean_sea_level"],
+    "Wind Energy": ["wind_speed_at_height_level_10m", "wind_speed_at_height_level_100m", "wind_direction_at_height_level_10m", "wind_direction_at_height_level_100m"],
+    "Solar Energy": ["surface_direct_downwelling_shortwave_flux_sum_1h", "surface_downwelling_shortwave_flux_sum_1h", "cloud_area_fraction_at_entire_atmosphere"],
+};
+
 const ALL_VARS = {};
 for (const g of VARIABLE_GROUPS) for (const v of g.vars) ALL_VARS[v.key] = v;
+const ALL_JUA_VARS = {};
+for (const g of JUA_VARIABLE_GROUPS) for (const v of g.vars) ALL_JUA_VARS[v.key] = v;
 
 
-function makeMultiLabel(selected) {
+function makeMultiLabel(selected, varLookup) {
+    if (!varLookup) varLookup = ALL_VARS;
     if (!Array.isArray(selected)) {
         try { selected = JSON.parse(selected); } catch { selected = []; }
     }
     if (selected.length === 0) return "Select Variables...";
     if (selected.length === 1) {
-        const v = ALL_VARS[selected[0]];
+        const v = varLookup[selected[0]] || ALL_VARS[selected[0]] || ALL_JUA_VARS[selected[0]];
         return v ? v.label : selected[0];
     }
-    if (selected.length <= 3) return selected.map(k => ALL_VARS[k]?.label || k).join(", ");
+    if (selected.length <= 3) return selected.map(k => (varLookup[k] || ALL_VARS[k] || ALL_JUA_VARS[k])?.label || k).join(", ");
     return `${selected.length} variables selected`;
 }
 
 
 // Build a multi-select checkbox popup for variables
-function buildVariablePopup(btn, storeWidget, filterFn, closePopup) {
+// groups/presets/varLookup can be overridden for Jua vs Open-Meteo
+function buildVariablePopup(btn, storeWidget, filterFn, closePopup, { groups, presets, varLookup } = {}) {
+    groups = groups || VARIABLE_GROUPS;
+    presets = presets || PRESETS;
+    varLookup = varLookup || ALL_VARS;
+
     const selected = new Set(getSelected(storeWidget));
     const popup = createPopup(btn);
 
     // Presets row
     const presetsRow = document.createElement("div");
     presetsRow.style.cssText = "display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #333;";
-    for (const [name, vars] of Object.entries(PRESETS)) {
-        // Only show preset if at least one of its vars passes the filter
+    for (const [name, vars] of Object.entries(presets)) {
         const filteredVars = vars.filter(filterFn);
         if (filteredVars.length === 0) continue;
         const tag = document.createElement("button");
@@ -130,7 +180,7 @@ function buildVariablePopup(btn, storeWidget, filterFn, closePopup) {
 
     popup.appendChild(presetsRow);
 
-    for (const group of VARIABLE_GROUPS) {
+    for (const group of groups) {
         const groupVars = group.vars.filter(v => filterFn(v.key));
         if (groupVars.length === 0) continue;
         addGroupHeader(popup, group.name);
@@ -152,7 +202,7 @@ function buildVariablePopup(btn, storeWidget, filterFn, closePopup) {
         const sel = [];
         popup.querySelectorAll("input[type=checkbox]").forEach(cb => { if (cb.checked) sel.push(cb.value); });
         storeWidget.value = JSON.stringify(sel);
-        btn.textContent = makeMultiLabel(sel);
+        btn.textContent = makeMultiLabel(sel, varLookup);
     }
 
     return popup;
@@ -163,7 +213,8 @@ app.registerExtension({
     name: "weather.variableselector",
 
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
-        if (nodeData.name !== "Weather_FetchOpenMeteo") return;
+        if (nodeData.name !== "Weather_FetchOpenMeteo" && nodeData.name !== "Weather_FetchJua") return;
+        const isJua = nodeData.name === "Weather_FetchJua";
 
         const onNodeCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
@@ -189,24 +240,34 @@ app.registerExtension({
             const { btnContainer, btn } = createSelectorButton("Select Variables...");
 
             function updateLabel() {
+                const varLookup = isJua ? ALL_JUA_VARS : ALL_VARS;
                 const backend = getBackend();
                 const widgetName = backend === "grid"
                     ? "backend.grid_variables_selection"
                     : "backend.variables_selection";
                 const w = node.widgets?.find(w => w.name === widgetName);
-                btn.textContent = makeMultiLabel(getSelected(w || { value: "[]" }));
+                btn.textContent = makeMultiLabel(getSelected(w || { value: "[]" }), varLookup);
             }
 
             function openLatlonPopup() {
                 const sw = node.widgets?.find(w => w.name === "backend.variables_selection");
                 if (!sw) return;
-                popup = buildVariablePopup(btn, sw, () => true, closePopup);
+                const opts = isJua ? { groups: JUA_VARIABLE_GROUPS, presets: JUA_PRESETS, varLookup: ALL_JUA_VARS } : {};
+                popup = buildVariablePopup(btn, sw, () => true, closePopup, opts);
             }
 
             function openGridPopup() {
                 const sw = node.widgets?.find(w => w.name === "backend.grid_variables_selection");
                 if (!sw) return;
-                popup = buildVariablePopup(btn, sw, k => GRID_KEYS.has(k), closePopup);
+                if (isJua) {
+                    popup = buildVariablePopup(btn, sw, () => true, closePopup, {
+                        groups: JUA_VARIABLE_GROUPS,
+                        presets: JUA_PRESETS,
+                        varLookup: ALL_JUA_VARS,
+                    });
+                } else {
+                    popup = buildVariablePopup(btn, sw, k => GRID_KEYS.has(k), closePopup);
+                }
             }
 
             btn.addEventListener("click", (e) => {
@@ -225,10 +286,12 @@ app.registerExtension({
             });
             domWidget.computeSize = () => [200, 26];
 
+            // Hide the raw JSON widget(s) and keep label in sync
+            const widgetsToHide = ["backend.variables_selection", "backend.grid_variables_selection"];
+
             let pollCount = 0;
             const pollInterval = setInterval(() => {
-                findAndHide("backend.variables_selection");
-                findAndHide("backend.grid_variables_selection");
+                for (const name of widgetsToHide) findAndHide(name);
                 updateLabel();
                 pollCount++;
                 if (pollCount > 200) clearInterval(pollInterval);
@@ -237,9 +300,9 @@ app.registerExtension({
             const origOnConfigure = this.onConfigure;
             this.onConfigure = function (config) {
                 origOnConfigure?.apply(this, arguments);
-                setTimeout(() => { findAndHide("backend.variables_selection"); findAndHide("backend.grid_variables_selection"); updateLabel(); }, 50);
-                setTimeout(() => { findAndHide("backend.variables_selection"); findAndHide("backend.grid_variables_selection"); updateLabel(); }, 200);
-                setTimeout(() => { findAndHide("backend.variables_selection"); findAndHide("backend.grid_variables_selection"); updateLabel(); }, 500);
+                for (const delay of [50, 200, 500]) {
+                    setTimeout(() => { for (const name of widgetsToHide) findAndHide(name); updateLabel(); }, delay);
+                }
             };
 
             const origOnRemoved = this.onRemoved;

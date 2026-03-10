@@ -166,13 +166,13 @@ def _response_to_timestamps(hourly):
 
 
 def _fetch_latlon_single(latitude, longitude, model_key, model_api_value,
-                         variables, forecast_days):
+                         variables, forecast_hours):
     """Fetch single-point time-series for one model using SDK (FlatBuffers)."""
     params = {
         "latitude": latitude,
         "longitude": longitude,
         "hourly": variables,
-        "forecast_days": forecast_days,
+        "forecast_hours": forecast_hours,
     }
     if model_api_value:
         params["models"] = model_api_value
@@ -244,8 +244,8 @@ class FetchWeatherForecast(io.ComfyNode):
                             tooltip="JSON array of selected variable keys. Managed by the variable selector popup.",
                         ),
                         io.Int.Input(
-                            "forecast_days", default=3, min=1, max=16, step=1,
-                            tooltip="Number of forecast days (1-16).",
+                            "forecast_hours", default=72, min=1, max=384, step=1,
+                            tooltip="Number of forecast hours (1-384, i.e. up to 16 days).",
                         ),
                     ]),
                     io.DynamicCombo.Option("grid", [
@@ -260,8 +260,8 @@ class FetchWeatherForecast(io.ComfyNode):
                             tooltip="JSON array of selected variable keys for grid mode. Managed by the variable selector popup.",
                         ),
                         io.Int.Input(
-                            "forecast_days", default=3, min=1, max=16, step=1,
-                            tooltip="Number of forecast days to fetch (all hourly steps included).",
+                            "forecast_hours", default=72, min=1, max=384, step=1,
+                            tooltip="Number of forecast hours to fetch (1-384, i.e. up to 16 days).",
                         ),
                     ]),
                 ]),
@@ -295,7 +295,7 @@ class FetchWeatherForecast(io.ComfyNode):
             raise ValueError("No coordinates provided.")
 
         variables_json = backend.get("variables_selection", '["temperature_2m"]')
-        forecast_days = backend["forecast_days"]
+        forecast_hours = backend["forecast_hours"]
 
         try:
             variables = json.loads(variables_json) if variables_json else []
@@ -306,7 +306,7 @@ class FetchWeatherForecast(io.ComfyNode):
 
         model_names = ", ".join(m[0] for m in selected_models)
         print(f"[Weather] Fetching Open-Meteo latlon: {len(points)} location(s), "
-              f"models=[{model_names}], vars={variables}, days={forecast_days}")
+              f"models=[{model_names}], vars={variables}, hours={forecast_hours}")
 
         locations = []
         info_lines = []
@@ -321,7 +321,7 @@ class FetchWeatherForecast(io.ComfyNode):
             for model_key, model_api_value in selected_models:
                 result = _fetch_latlon_single(
                     latitude, longitude, model_key, model_api_value,
-                    variables, forecast_days,
+                    variables, forecast_hours,
                 )
                 model_results[model_key] = result
                 print(f"[Weather]   {model_key}: {len(result['timestamps'])} hours, "
@@ -359,7 +359,7 @@ class FetchWeatherForecast(io.ComfyNode):
         lon_west = coords["lon_west"]
         lat_north = coords["lat_north"]
         lon_east = coords["lon_east"]
-        forecast_days = backend["forecast_days"]
+        forecast_hours = backend["forecast_hours"]
 
         # Parse selected variables
         variables_json = backend.get("grid_variables_selection", '["temperature_2m"]')
@@ -395,7 +395,7 @@ class FetchWeatherForecast(io.ComfyNode):
             grid_result = cls._fetch_single_model_grid(
                 variables, model_key, model_api_value,
                 lat_south, lon_west, lat_north, lon_east,
-                forecast_days,
+                forecast_hours,
             )
             model_info_parts = []
             for variable in variables:
@@ -421,11 +421,17 @@ class FetchWeatherForecast(io.ComfyNode):
             for part in model_info_parts:
                 all_info_lines.append(f"  {part}")
 
+        # init_time = first timestamp in the data (≈ model initialization time)
+        first_field = next(iter(fields.values()), {})
+        first_ts = (first_field.get("timestamps") or [None])[0]
+        init_time = first_ts or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M")
+
         model_names = [mk for mk, _ in resolved_models]
         grid_data = {
             "fields": fields,
             "model_names": model_names,
             "variables": variables,
+            "init_time": init_time,
         }
         all_info_lines.append(f"Models: {', '.join(model_names)}")
 
@@ -437,34 +443,42 @@ class FetchWeatherForecast(io.ComfyNode):
     @classmethod
     def _fetch_single_model_grid(cls, variables, model_key, model_api_value,
                                   lat_south, lon_west, lat_north, lon_east,
-                                  forecast_days):
+                                  forecast_hours):
         """Fetch grid data for a single model, multiple variables.
         Returns dict with timestamps, latitude, longitude, and
         variables: {var_name: numpy 3D array [T, rows, cols]}."""
         resolution = GRID_MODELS.get(model_key, (None, None, 0.25))[2]
 
         print(f"[Weather] Fetching Open-Meteo grid: {variables}, model={model_key}, "
-              f"bbox=({lat_south},{lon_west},{lat_north},{lon_east}), days={forecast_days}")
+              f"bbox=({lat_south},{lon_west},{lat_north},{lon_east}), hours={forecast_hours}")
 
         est_rows = int((lat_north - lat_south) / resolution) + 1
         est_cols = int((lon_east - lon_west) / resolution) + 1
         est_total = est_rows * est_cols
 
-        max_points = 20000
+        max_points = 200000
         if est_total > max_points:
             raise ValueError(
                 f"Grid too large: ~{est_total} points ({est_rows}x{est_cols} at {resolution}°). "
-                f"Maximum is {max_points}. Zoom in or select a coarser model."
+                f"Maximum is {max_points:,}. Zoom in or select a coarser model."
             )
 
         tile_limit = 950
-        tile_lat_span = max(resolution, (tile_limit / max(est_cols, 1)) * resolution)
+        # Tile in both dimensions to stay under the API's 1000-location limit
+        tile_max_cols = min(est_cols, int(tile_limit ** 0.5))
+        tile_max_rows = max(1, tile_limit // max(tile_max_cols, 1))
+        tile_lat_span = max(resolution, tile_max_rows * resolution)
+        tile_lon_span = max(resolution, tile_max_cols * resolution)
 
         tiles = []
         t_south = lat_south
         while t_south < lat_north:
             t_north = min(t_south + tile_lat_span, lat_north)
-            tiles.append((t_south, lon_west, t_north, lon_east))
+            t_west = lon_west
+            while t_west < lon_east:
+                t_east = min(t_west + tile_lon_span, lon_east)
+                tiles.append((t_south, t_west, t_north, t_east))
+                t_west = t_east + resolution
             t_south = t_north + resolution
 
         print(f"[Weather] Estimated {est_total} points, splitting into {len(tiles)} tile(s)")
@@ -481,7 +495,7 @@ class FetchWeatherForecast(io.ComfyNode):
                 "longitude": (lw + le) / 2,
                 "hourly": variables,
                 "models": model_api_value,
-                "forecast_days": forecast_days,
+                "forecast_hours": forecast_hours,
                 "bounding_box": bbox_str,
             }
 

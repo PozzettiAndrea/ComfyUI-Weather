@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-weather"
-description = "Weather data nodes for ComfyUI. Fetch forecasts from Open-Meteo and Jua.ai, visualize and process weather data."
+description = "Weather data nodes for ComfyUI. Fetch forecasts from Open-Meteo and Jua.ai, run ML weather predictions (FourCastNet, GraphCast, Aurora), visualize and process weather data."
 version = "0.1.0"
 license = {text = "MIT"}
 

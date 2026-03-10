@@ -1,12 +1,12 @@
 import { app } from "../../../scripts/app.js";
 
-// Hide/show output slots on Weather_FetchOpenMeteo based on backend selection.
+// Hide/show output slots based on backend selection.
 // When latlon: hide WEATHER_GRID output. When grid: hide WEATHER_DATA output.
 app.registerExtension({
     name: "weather.outputtoggle",
 
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
-        if (nodeData.name !== "Weather_FetchOpenMeteo") return;
+        if (nodeData.name !== "Weather_FetchOpenMeteo" && nodeData.name !== "Weather_FetchJua") return;
 
         const onNodeCreated = nodeType.prototype.onNodeCreated;
 

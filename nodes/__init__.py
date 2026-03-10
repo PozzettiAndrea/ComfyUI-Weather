@@ -9,9 +9,11 @@ from .heatmap import WeatherHeatmap
 from .preview_grid import PreviewWeatherGrid
 from .latlon_collector import LatLonCollector
 from .grid_collector import GridCollector
-from .set_api_key import SetOpenMeteoAPIKey
+from .set_api_key import SetOpenMeteoAPIKey, SetJuaAPIKey
 from .preview_data import PreviewWeatherData
 from .preview_grid_dual import PreviewWeatherGridDual
+from .load_weather_model import LoadWeatherModel
+from .predict_weather import PredictWeather
 
 NODE_CLASSES = [
     GeocodeCityName,
@@ -28,4 +30,7 @@ NODE_CLASSES = [
     LatLonCollector,
     GridCollector,
     SetOpenMeteoAPIKey,
+    SetJuaAPIKey,
+    LoadWeatherModel,
+    PredictWeather,
 ]

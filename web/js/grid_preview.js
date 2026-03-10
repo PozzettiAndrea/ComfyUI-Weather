@@ -105,10 +105,11 @@ app.registerExtension({
                 if (event.data?.type === "GRID_INFO" && event.data.info) {
                     const i = event.data.info;
                     const frameInfo = i.frames > 1 ? `  Frame ${i.frame}/${i.frames}` : "";
+                    const initInfo = i.initTime ? `\nPrediction made at ${i.initTime}` : "";
                     infoBar.textContent =
                         `${i.variable} [${i.unit}]  ${i.timestamp}${frameInfo}\n` +
                         `Grid: ${i.rows}\u00d7${i.cols}  Lat: ${i.latRange}  Lon: ${i.lonRange}\n` +
-                        `Range: ${i.vmin} to ${i.vmax} ${i.unit}`;
+                        `Range: ${i.vmin} to ${i.vmax} ${i.unit}${initInfo}`;
                 } else if (event.data?.type === "GRID_ERROR" && event.data.error) {
                     infoBar.innerHTML = `<span style="color:#ff6b6b;">Error: ${event.data.error}</span>`;
                 } else if (event.data?.type === "VIEW_STATE") {

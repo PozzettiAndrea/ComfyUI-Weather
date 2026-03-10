@@ -31,7 +31,12 @@ const GRID_MODELS = [
     { key: "knmi_harmonie_arome_europe",      label: "HARMONIE AROME (KNMI)",  res: "0.04°" },
 ];
 
-const ALL_MODELS = [...LATLON_MODELS, ...GRID_MODELS];
+// Must match JUA_MODELS in fetch_jua.py
+const JUA_MODELS = [
+    { key: "ept2", label: "EPT-2 (Jua)", res: "~11km" },
+];
+
+const ALL_MODELS = [...LATLON_MODELS, ...GRID_MODELS, ...JUA_MODELS];
 
 function makeLabel(selected) {
     if (selected.length === 0) return "Select Models...";
@@ -47,6 +52,11 @@ function getBackendValue(node) {
     return w?.value || "latlon";
 }
 
+function getModelsForNode(node) {
+    if (node.comfyClass === "Weather_FetchJua") return JUA_MODELS;
+    return getBackendValue(node) === "grid" ? GRID_MODELS : LATLON_MODELS;
+}
+
 function getModelsForBackend(backend) {
     return backend === "grid" ? GRID_MODELS : LATLON_MODELS;
 }
@@ -55,7 +65,8 @@ app.registerExtension({
     name: "weather.modelselector",
 
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
-        if (nodeData.name !== "Weather_FetchOpenMeteo") return;
+        if (nodeData.name !== "Weather_FetchOpenMeteo" && nodeData.name !== "Weather_FetchJua") return;
+        const isJua = nodeData.name === "Weather_FetchJua";
 
         const onNodeCreated = nodeType.prototype.onNodeCreated;
 
@@ -86,13 +97,13 @@ app.registerExtension({
                 if (popup) { closePopup(); return; }
 
                 const selected = new Set(getSelected(storeWidget));
-                const backend = getBackendValue(node);
-                const models = getModelsForBackend(backend);
+                const models = isJua ? getModelsForNode(node) : getModelsForBackend(getBackendValue(node));
 
                 popup = createPopup(btn);
 
                 // Title
-                addGroupHeader(popup, backend === "grid" ? "Grid Models (bbox)" : "NWP Models");
+                const backend = getBackendValue(node);
+                addGroupHeader(popup, isJua ? "Jua Models" : (backend === "grid" ? "Grid Models (bbox)" : "NWP Models"));
 
                 // Select all / clear
                 addActionsRow(popup, {

@@ -169,6 +169,7 @@ const viewer = document.getElementById("viewer");
 
 let gridData = null;      // current field metadata + .values = current 2D frame
 let allFields = {};
+let gridInitTime = null;  // model initialization/analysis time
 let viewState = { offsetX: 0, offsetY: 0, scale: 1 };
 let lockedBaseScale = null;
 let isDragging = false;
@@ -459,6 +460,7 @@ function render() {
             variable: gridData.long_name || gridData.variable,
             unit: gridData.unit,
             timestamp: tsLabel,
+            initTime: gridInitTime,
             rows, cols,
             frames: frames.length,
             frame: currentFrame + 1,
@@ -696,6 +698,9 @@ window.addEventListener("message", async (event) => {
                     if (r.ok) coastlines = await r.json();
                 } catch (e) {}
             }
+            // Store top-level metadata
+            gridInitTime = data.init_time || null;
+
             if (data.fields && typeof data.fields === "object") {
                 allFields = {};
                 for (const [name, field] of Object.entries(data.fields)) {
