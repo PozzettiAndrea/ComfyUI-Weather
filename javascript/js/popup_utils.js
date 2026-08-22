@@ -21,8 +21,14 @@ export function getSelected(widget) {
 
 export function createPopup(btn) {
     const popup = document.createElement("div");
+    // Top-layer popover rather than a bare div: it renders above everything
+    // without z-index games, is not clipped by any ancestor overflow, and gives
+    // light dismiss (outside click / Esc) for free -- so no pack needs a
+    // document-level listener. `inset:auto;margin:0` overrides the UA default
+    // ([popover] is inset:0;margin:auto), which would otherwise centre it.
+    popup.popover = "auto";
     popup.style.cssText =
-        "position:fixed;z-index:99999;background:#1e1e2e;border:1px solid #555;" +
+        "position:fixed;inset:auto;margin:0;z-index:99999;background:#1e1e2e;border:1px solid #555;" +
         "border-radius:6px;padding:8px;box-shadow:0 4px 20px rgba(0,0,0,0.5);" +
         "font-family:sans-serif;font-size:12px;color:#ddd;min-width:280px;" +
         "max-height:420px;overflow-y:auto;";
@@ -96,15 +102,24 @@ export function addActionsRow(popup, { onSelectAll, onClear }) {
 }
 
 export function setupOutsideClose(popup, btn, closeFunc) {
-    setTimeout(() => {
-        const handler = (e) => {
-            if (!popup?.contains(e.target) && e.target !== btn) {
-                closeFunc();
-                document.removeEventListener("pointerdown", handler, true);
-            }
-        };
-        document.addEventListener("pointerdown", handler, true);
-    }, 0);
+    // The popover is `auto`, so the browser closes it on outside click or Esc.
+    // We only need to hear about it. The previous implementation attached a
+    // capture-phase pointerdown listener to `document`, which sees every click
+    // in the whole ComfyUI page -- including other packs' -- and had to be
+    // removed by hand.
+    popup.addEventListener("toggle", (e) => {
+        if (e.newState !== "closed") return;
+        // Light dismiss runs on pointerdown, which precedes the button's click.
+        // Without this stamp, clicking the button while the popup is open would
+        // close it and then immediately re-open it, so it could never be
+        // toggled shut. `justDismissed(btn)` lets the click handler bail.
+        btn._popoverClosedAt = performance.now();
+        closeFunc();
+    });
+}
+
+export function justDismissed(btn, ms = 250) {
+    return performance.now() - (btn._popoverClosedAt || 0) < ms;
 }
 
 export function createSelectorButton(text) {

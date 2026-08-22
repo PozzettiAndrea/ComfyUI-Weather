@@ -421,7 +421,7 @@ class FetchWeatherForecast(io.ComfyNode):
             for part in model_info_parts:
                 all_info_lines.append(f"  {part}")
 
-        # init_time = first timestamp in the data (≈ model initialization time)
+        # init_time = first timestamp in the data (~= model initialization time)
         first_field = next(iter(fields.values()), {})
         first_ts = (first_field.get("timestamps") or [None])[0]
         init_time = first_ts or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M")

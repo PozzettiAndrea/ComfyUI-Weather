@@ -1,6 +1,6 @@
 import { app } from "../../../scripts/app.js";
 import {
-    hideWidgetForGood, getSelected, createPopup, addGroupHeader, addRow,
+    hideWidgetForGood, getSelected, createPopup, addGroupHeader, addRow, justDismissed,
     addActionsRow, setupOutsideClose, createSelectorButton, addDOMSelectorWidget,
 } from "./popup_utils.js";
 
@@ -128,11 +128,18 @@ app.registerExtension({
                     addRow(popup, model, cb);
                 }
 
-                document.body.appendChild(popup);
+                // Into our own widget DOM, not the shared document. The popover's
+                // top layer means it still paints above the canvas.
+                (btn.parentElement || btn).appendChild(popup);
+                popup.showPopover();
                 setupOutsideClose(popup, btn, closePopup);
             }
 
-            btn.addEventListener("click", (e) => { e.stopPropagation(); openPopup(); });
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                if (justDismissed(btn)) return;
+                openPopup();
+            });
 
             addDOMSelectorWidget(
                 this, "model_selector_btn", "MODEL_SELECTOR",

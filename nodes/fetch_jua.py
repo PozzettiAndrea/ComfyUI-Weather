@@ -33,7 +33,7 @@ JUA_VAR_META = {
     "surface_downwelling_shortwave_flux_sum_1h": ("Shortwave Flux (1h)", "W/m²"),
 }
 
-# Jua grid resolution (~0.081° ≈ 9km)
+# Jua grid resolution (~0.081° ~= 9km)
 JUA_GRID_RESOLUTION = 0.081
 
 # API key for Jua (set via env var or node input)

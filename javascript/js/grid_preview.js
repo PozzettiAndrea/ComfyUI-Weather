@@ -102,6 +102,9 @@ app.registerExtension({
 
             // Messages from iframe
             const onMessage = (event) => {
+                // Provenance guard: the 'message' event is window-wide, so
+                // without this we also handle every OTHER pack's iframe messages.
+                if (event.source !== iframe.contentWindow) return;
                 if (event.data?.type === "GRID_INFO" && event.data.info) {
                     const i = event.data.info;
                     const frameInfo = i.frames > 1 ? `  Frame ${i.frame}/${i.frames}` : "";

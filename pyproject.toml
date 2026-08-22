@@ -9,5 +9,6 @@ Repository = "https://github.com/PozzettiAndrea/ComfyUI-Weather"
 
 [tool.comfy]
 PublisherId = "pznodes"
-DisplayName = "ComfyUI-Weather"
+DisplayName = "Weather"
+web = "javascript"
 Icon = ""

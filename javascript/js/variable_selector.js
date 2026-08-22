@@ -1,6 +1,6 @@
 import { app } from "../../../scripts/app.js";
 import {
-    hideWidgetForGood, getSelected, createPopup, addGroupHeader, addRow,
+    hideWidgetForGood, getSelected, createPopup, addGroupHeader, addRow, justDismissed,
     setupOutsideClose, createSelectorButton,
 } from "./popup_utils.js";
 
@@ -195,7 +195,10 @@ function buildVariablePopup(btn, storeWidget, filterFn, closePopup, { groups, pr
         }
     }
 
-    document.body.appendChild(popup);
+    // Into our own widget DOM, not the shared document. The popover's
+    // top layer means it still paints above the canvas.
+    (btn.parentElement || btn).appendChild(popup);
+    popup.showPopover();
     setupOutsideClose(popup, btn, closePopup);
 
     function sync() {
@@ -272,6 +275,7 @@ app.registerExtension({
 
             btn.addEventListener("click", (e) => {
                 e.stopPropagation();
+                if (justDismissed(btn)) return;
                 if (popup) { closePopup(); return; }
                 const backend = getBackend();
                 console.log("[weather.varselector] click, backend:", backend,

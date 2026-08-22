@@ -68,6 +68,9 @@ app.registerExtension({
             }
 
             const onMessage = (event) => {
+                // Provenance guard: the 'message' event is window-wide, so
+                // without this we also handle every OTHER pack's iframe messages.
+                if (event.source !== iframe.contentWindow) return;
                 if (event.data?.type === "DATA_INFO") {
                     infoBar.textContent = event.data.info || "";
                 } else if (event.data?.type === "DATA_ERROR") {
